@@ -1,5 +1,6 @@
 """Render volumes, point clouds, and grasp detections in rviz."""
 
+import vgn.ros_mock
 import matplotlib.colors
 import numpy as np
 from sensor_msgs.msg import PointCloud2

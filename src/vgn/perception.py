@@ -48,7 +48,7 @@ class CameraIntrinsic(object):
 
     @classmethod
     def from_dict(cls, data):
-        """Deserialize intrinisic parameters from a dict object."""
+        """Deserialize intrinsic parameters from a dict object."""
         intrinsic = cls(
             width=data["width"],
             height=data["height"],
@@ -81,7 +81,7 @@ class TSDFVolume(object):
         Args:
             depth_img: The depth image.
             intrinsic: The intrinsic parameters of a pinhole camera model.
-            extrinsics: The transform from the TSDF to camera coordinates, T_eye_task.
+            extrinsic: The transform from the TSDF to camera coordinates, T_eye_task.
         """
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(np.empty_like(depth_img)),
@@ -133,5 +133,5 @@ def camera_on_sphere(origin, radius, theta, phi):
         radius * cos(theta),
     ]
     target = np.array([0.0, 0.0, 0.0])
-    up = np.array([0.0, 0.0, 1.0])  # this breaks when looking straight down
+    up = np.array([0.0, 0.0, 1.0])
     return Transform.look_at(eye, target, up) * origin.inverse()

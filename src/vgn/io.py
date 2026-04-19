@@ -41,7 +41,6 @@ def read_sensor_data(root, scene_id):
 
 
 def write_grasp(root, scene_id, grasp, label):
-    # TODO concurrent writes could be an issue
     csv_path = root / "grasps.csv"
     if not csv_path.exists():
         create_csv(

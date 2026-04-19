@@ -136,9 +136,10 @@ class ClutterRemovalSim(object):
     def acquire_tsdf(self, n, N=None):
         """Render synthetic depth images from n viewpoints and integrate into a TSDF.
 
-        If N is None, the n viewpoints are equally distributed on circular trajectory.
-
-        If N is given, the first n viewpoints on a circular trajectory consisting of N points are rendered.
+        Returns:
+            tsdf:    TSDFVolume (40 resolution)
+            pc:      point cloud from high-res TSDF
+            timing:  integration time in seconds
         """
         tsdf = TSDFVolume(self.size, 40)
         high_res_tsdf = TSDFVolume(self.size, 120)
@@ -153,7 +154,7 @@ class ClutterRemovalSim(object):
 
         timing = 0.0
         for extrinsic in extrinsics:
-            depth_img = self.camera.render(extrinsic)[1]
+            _, depth_img = self.camera.render(extrinsic)
             tic = time.time()
             tsdf.integrate(depth_img, self.camera.intrinsic, extrinsic)
             timing += time.time() - tic
@@ -169,7 +170,6 @@ class ClutterRemovalSim(object):
         approach = T_world_grasp.rotation.as_matrix()[:, 2]
         angle = np.arccos(np.dot(approach, np.r_[0.0, 0.0, -1.0]))
         if angle > np.pi / 3.0:
-            # side grasp, lift the object after establishing a grasp
             T_grasp_pregrasp_world = Transform(Rotation.identity(), [0.0, 0.0, 0.1])
             T_world_retreat = T_grasp_pregrasp_world * T_world_grasp
         else:
@@ -203,7 +203,6 @@ class ClutterRemovalSim(object):
         return result
 
     def remove_and_wait(self):
-        # wait for objects to rest while removing bodies that fell outside the workspace
         removed_object = True
         while removed_object:
             self.wait_for_objects_to_rest()
@@ -213,10 +212,8 @@ class ClutterRemovalSim(object):
         timeout = self.world.sim_time + timeout
         objects_resting = False
         while not objects_resting and self.world.sim_time < timeout:
-            # simulate a quarter of a second
             for _ in range(60):
                 self.world.step()
-            # check whether all objects are resting
             objects_resting = True
             for _, body in self.world.bodies.items():
                 if np.linalg.norm(body.get_velocity()) > tol:
@@ -233,7 +230,6 @@ class ClutterRemovalSim(object):
         return removed_object
 
     def check_success(self, gripper):
-        # check that the fingers are in contact with some object and not fully closed
         contacts = self.world.get_contacts(gripper.body)
         res = len(contacts) > 0 and gripper.read() > 0.1 * gripper.max_opening_width
         return res
@@ -254,7 +250,7 @@ class Gripper(object):
     def reset(self, T_world_tcp):
         T_world_body = T_world_tcp * self.T_tcp_body
         self.body = self.world.load_urdf(self.urdf_path, T_world_body)
-        self.body.set_pose(T_world_body)  # sets the position of the COM, not URDF link
+        self.body.set_pose(T_world_body)
         self.constraint = self.world.add_constraint(
             self.body,
             None,
@@ -266,7 +262,6 @@ class Gripper(object):
             T_world_body,
         )
         self.update_tcp_constraint(T_world_tcp)
-        # constraint to keep fingers centered
         self.world.add_constraint(
             self.body,
             self.body.links["panda_leftfinger"],

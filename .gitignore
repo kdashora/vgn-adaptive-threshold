@@ -109,3 +109,7 @@ venv.bak/
 
 # data
 data
+data/datasets/
+data/runs/
+data/experiments/
+data/raw/

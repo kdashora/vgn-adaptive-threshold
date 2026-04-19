@@ -21,13 +21,13 @@ class Dataset(torch.utils.data.Dataset):
         ori = Rotation.from_quat(self.df.loc[i, "qx":"qw"].to_numpy(np.single))
         pos = self.df.loc[i, "i":"k"].to_numpy(np.single)
         width = self.df.loc[i, "width"].astype(np.single)
-        label = self.df.loc[i, "label"].astype(np.long)
+        label = self.df.loc[i, "label"].astype(np.int64)
         voxel_grid = read_voxel_grid(self.root, scene_id)
 
         if self.augment:
             voxel_grid, ori, pos = apply_transform(voxel_grid, ori, pos)
 
-        index = np.round(pos).astype(np.long)
+        index = np.clip(np.round(pos).astype(np.int64), 0, 39)
         rotations = np.empty((2, 4), dtype=np.single)
         R = Rotation.from_rotvec(np.pi * np.r_[0.0, 0.0, 1.0])
         rotations[0] = ori.as_quat()
@@ -50,7 +50,7 @@ def apply_transform(voxel_grid, orientation, position):
     T_center = Transform(Rotation.identity(), np.r_[20.0, 20.0, 20.0])
     T = T_center * T_augment * T_center.inverse()
 
-    # transform voxel grid
+    # transform voxel grid — channel 0 only (1-channel TSDF)
     T_inv = T.inverse()
     matrix, offset = T_inv.rotation.as_matrix(), T_inv.translation
     voxel_grid[0] = ndimage.affine_transform(voxel_grid[0], matrix, offset, order=0)

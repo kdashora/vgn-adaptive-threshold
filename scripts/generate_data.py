@@ -46,14 +46,13 @@ def main(args):
         n = np.random.randint(MAX_VIEWPOINT_COUNT) + 1
         depth_imgs, extrinsics = render_images(sim, n)
 
-        # reconstrct point cloud using a subset of the images
+        # reconstruct point cloud
         tsdf = create_tsdf(sim.size, 120, depth_imgs, sim.camera.intrinsic, extrinsics)
         pc = tsdf.get_cloud()
 
         # crop surface and borders from point cloud
         bounding_box = o3d.geometry.AxisAlignedBoundingBox(sim.lower, sim.upper)
         pc = pc.crop(bounding_box)
-        # o3d.visualization.draw_geometries([pc])
 
         if pc.is_empty():
             print("Point cloud empty, skipping scene")
@@ -93,7 +92,7 @@ def render_images(sim, n):
         phi = np.random.uniform(0.0, 2.0 * np.pi)
 
         extrinsic = camera_on_sphere(origin, r, theta, phi)
-        depth_img = sim.camera.render(extrinsic)[1]
+        _, depth_img = sim.camera.render(extrinsic)
 
         extrinsics[i] = extrinsic.to_list()
         depth_imgs[i] = depth_img
@@ -106,10 +105,9 @@ def sample_grasp_point(point_cloud, finger_depth, eps=0.1):
     normals = np.asarray(point_cloud.normals)
     ok = False
     while not ok:
-        # TODO this could result in an infinite loop, though very unlikely
         idx = np.random.randint(len(points))
         point, normal = points[idx], normals[idx]
-        ok = normal[2] > -0.1  # make sure the normal is poitning upwards
+        ok = normal[2] > -0.1
     grasp_depth = np.random.uniform(-eps * finger_depth, (1.0 + eps) * finger_depth)
     point = point + normal * grasp_depth
     return point, normal
@@ -137,7 +135,6 @@ def evaluate_grasp_point(sim, pos, normal, num_rotations=6):
         widths.append(width)
 
     # detect mid-point of widest peak of successful yaw angles
-    # TODO currently this does not properly handle periodicity
     successes = (np.asarray(outcomes) == Label.SUCCESS).astype(float)
     if np.sum(successes):
         peaks, properties = signal.find_peaks(

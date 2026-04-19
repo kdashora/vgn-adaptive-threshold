@@ -13,8 +13,8 @@ from vgn.utils.transform import Rotation, Transform
 
 MAX_CONSECUTIVE_FAILURES = 2
 
-
-State = collections.namedtuple("State", ["tsdf", "pc"])
+# UPDATED: State now carries num_objects so detection can use it as a feature
+State = collections.namedtuple("State", ["tsdf", "pc", "num_objects"])
 
 
 def run(
@@ -31,12 +31,6 @@ def run(
     sim_gui=False,
     rviz=False,
 ):
-    """Run several rounds of simulated clutter removal experiments.
-
-    Each round, m objects are randomly placed in a tray. Then, the grasping pipeline is
-    run until (a) no objects remain, (b) the planner failed to find a grasp hypothesis,
-    or (c) maximum number of consecutive failed grasp attempts.
-    """
     sim = ClutterRemovalSim(scene, object_set, gui=sim_gui, seed=seed)
     logger = Logger(logdir, description)
 
@@ -52,37 +46,34 @@ def run(
         while sim.num_objects > 0 and consecutive_failures < MAX_CONSECUTIVE_FAILURES:
             timings = {}
 
-            # scan the scene
             tsdf, pc, timings["integration"] = sim.acquire_tsdf(n=n, N=N)
 
             if pc.is_empty():
-                break  # empty point cloud, abort this round TODO this should not happen
+                break
 
-            # visualize scene
             if rviz:
                 vis.clear()
                 vis.draw_workspace(sim.size)
                 vis.draw_tsdf(tsdf.get_grid().squeeze(), tsdf.voxel_size)
                 vis.draw_points(np.asarray(pc.points))
 
-            # plan grasps
-            state = State(tsdf, pc)
-            grasps, scores, timings["planning"] = grasp_plan_fn(state)
+            # UPDATED: pass current num_objects into state
+            state = State(tsdf, pc, sim.num_objects)
+
+            grasps, scores, timings["planning"], features = grasp_plan_fn(state)
 
             if len(grasps) == 0:
-                break  # no detections found, abort this round
+                break
 
             if rviz:
                 vis.draw_grasps(grasps, scores, sim.gripper.finger_depth)
 
-            # execute grasp
             grasp, score = grasps[0], scores[0]
             if rviz:
                 vis.draw_grasp(grasp, score, sim.gripper.finger_depth)
             label, _ = sim.execute_grasp(grasp, allow_contact=True)
 
-            # log the grasp
-            logger.log_grasp(round_id, state, timings, grasp, score, label)
+            logger.log_grasp(round_id, state, timings, grasp, score, label, features, sim.num_objects)
 
             if last_label == Label.FAILURE and label == Label.FAILURE:
                 consecutive_failures += 1
@@ -100,8 +91,9 @@ class Logger(object):
         self.scenes_dir = self.logdir / "scenes"
         self.scenes_dir.mkdir(parents=True, exist_ok=True)
 
-        self.rounds_csv_path = self.logdir / "rounds.csv"
-        self.grasps_csv_path = self.logdir / "grasps.csv"
+        self.rounds_csv_path   = self.logdir / "rounds.csv"
+        self.grasps_csv_path   = self.logdir / "grasps.csv"
+        self.features_csv_path = self.logdir / "features.csv"
         self._create_csv_files_if_needed()
 
     def _create_csv_files_if_needed(self):
@@ -110,22 +102,25 @@ class Logger(object):
 
         if not self.grasps_csv_path.exists():
             columns = [
-                "round_id",
-                "scene_id",
-                "qx",
-                "qy",
-                "qz",
-                "qw",
-                "x",
-                "y",
-                "z",
-                "width",
-                "score",
-                "label",
-                "integration_time",
-                "planning_time",
+                "round_id", "scene_id",
+                "qx", "qy", "qz", "qw",
+                "x", "y", "z",
+                "width", "score", "label",
+                "integration_time", "planning_time",
             ]
             io.create_csv(self.grasps_csv_path, columns)
+
+        if not self.features_csv_path.exists():
+            feature_columns = [
+                "round_id", "scene_id", "object_count",
+                "qual_mean", "qual_std", "qual_max",
+                "qual_p50", "qual_p75", "qual_p90",
+                "num_above_050", "num_above_065", "num_above_075",
+                "num_above_085", "num_above_095",
+                "tsdf_surface", "tsdf_occupied",
+                "label",
+            ]
+            io.create_csv(self.features_csv_path, feature_columns)
 
     def last_round_id(self):
         df = pd.read_csv(self.rounds_csv_path)
@@ -134,44 +129,42 @@ class Logger(object):
     def log_round(self, round_id, object_count):
         io.append_csv(self.rounds_csv_path, round_id, object_count)
 
-    def log_grasp(self, round_id, state, timings, grasp, score, label):
-        # log scene
+    def log_grasp(self, round_id, state, timings, grasp, score, label, features, object_count):
         tsdf, points = state.tsdf, np.asarray(state.pc.points)
         scene_id = uuid.uuid4().hex
         scene_path = self.scenes_dir / (scene_id + ".npz")
         np.savez_compressed(scene_path, grid=tsdf.get_grid(), points=points)
 
-        # log grasp
         qx, qy, qz, qw = grasp.pose.rotation.as_quat()
         x, y, z = grasp.pose.translation
         width = grasp.width
-        label = int(label)
+        label_int = int(label)
         io.append_csv(
             self.grasps_csv_path,
-            round_id,
-            scene_id,
-            qx,
-            qy,
-            qz,
-            qw,
-            x,
-            y,
-            z,
-            width,
-            score,
-            label,
-            timings["integration"],
-            timings["planning"],
+            round_id, scene_id,
+            qx, qy, qz, qw,
+            x, y, z,
+            width, score, label_int,
+            timings["integration"], timings["planning"],
+        )
+
+        io.append_csv(
+            self.features_csv_path,
+            round_id, scene_id, object_count,
+            features["qual_mean"],    features["qual_std"],     features["qual_max"],
+            features["qual_p50"],     features["qual_p75"],     features["qual_p90"],
+            features["num_above_050"], features["num_above_065"], features["num_above_075"],
+            features["num_above_085"], features["num_above_095"],
+            features["tsdf_surface"], features["tsdf_occupied"],
+            label_int,
         )
 
 
 class Data(object):
-    """Object for loading and analyzing experimental data."""
-
     def __init__(self, logdir):
-        self.logdir = logdir
-        self.rounds = pd.read_csv(logdir / "rounds.csv")
-        self.grasps = pd.read_csv(logdir / "grasps.csv")
+        self.logdir  = logdir
+        self.rounds  = pd.read_csv(logdir / "rounds.csv")
+        self.grasps  = pd.read_csv(logdir / "grasps.csv")
 
     def num_rounds(self):
         return len(self.rounds.index)
@@ -199,5 +192,4 @@ class Data(object):
         scene_id, grasp, label = io.read_grasp(self.grasps, i)
         score = self.grasps.loc[i, "score"]
         scene_data = np.load(self.logdir / "scenes" / (scene_id + ".npz"))
-
         return scene_data["points"], grasp, score, label

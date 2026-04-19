@@ -29,13 +29,14 @@ def main(args):
     df = df.rename(columns={"x": "i", "y": "j", "z": "k"})
     write_df(df, args.dataset)
 
-    # create tsdfs
+    # create 1-channel TSDF voxel grids
     for f in tqdm(list((args.raw / "scenes").iterdir())):
         if f.suffix != ".npz":
             continue
+
         depth_imgs, extrinsics = read_sensor_data(args.raw, f.stem)
         tsdf = create_tsdf(size, RESOLUTION, depth_imgs, intrinsic, extrinsics)
-        grid = tsdf.get_grid()
+        grid = tsdf.get_grid()  # shape (1, 40, 40, 40)
         write_voxel_grid(args.dataset, f.stem, grid)
 
 
